@@ -8,25 +8,22 @@ import (
 )
 
 func main() {
-	//read config file from disk and store in cfg
+
 	cfg, err := config.Read()
 	if err != nil {
 		fmt.Printf("error reading config file: %v", err)
 		return
 	}
 
-	//store config in a state struct
 	s := state{
 		config: &cfg,
 	}
 
-	//create instance of commands and store handlers into it
 	cmds := commands{
 		handlersMap: make(map[string]func(*state, command) error),
 	}
 	cmds.register("login", handlerLogin)
 
-	//get the input from the command line when program runs
 	commandLineInput := os.Args
 	if len(commandLineInput) < 3 {
 		fmt.Println("error, no arguments provided")
@@ -39,7 +36,6 @@ func main() {
 	commandArgs := commandLineInput[2:]
 	cmd := command{name: commandName, args: commandArgs}
 
-	//call command with arguments
 	if err = cmds.run(&s, cmd); err != nil {
 		fmt.Println("could not execute run command")
 		os.Exit(1)
