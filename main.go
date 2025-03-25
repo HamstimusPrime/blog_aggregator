@@ -1,11 +1,23 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
+	"log"
 	"os"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/hamstimusprime/blog_aggregator/internal/config"
+	"github.com/hamstimusprime/blog_aggregator/internal/database"
+	_ "github.com/lib/pq"
 )
+
+type state struct {
+	config *config.Config
+	db     *database.Queries
+}
 
 func main() {
 	//read config file from disk and store in cfg
@@ -15,16 +27,26 @@ func main() {
 		return
 	}
 
+	//connect to database
+	db, err := sql.Open("postgres", cfg.DbURL)
+	if err != nil {
+		log.Fatalf("error connecting to database, %v", err)
+	}
+	dbQueries := database.New(db)
+	defer db.Close()
+
 	//store config in a state struct
-	s := state{
+	s := &state{
 		config: &cfg,
+		db:     dbQueries,
 	}
 
-	//create instance of commands and store handlers into it
+	//create a new instance of the commands map and store handler functions inside of it
 	cmds := commands{
 		handlersMap: make(map[string]func(*state, command) error),
 	}
 	cmds.register("login", handlerLogin)
+	cmds.register("register", handlerRegister)
 
 	//get the input from the command line when program runs
 	commandLineInput := os.Args
@@ -37,25 +59,27 @@ func main() {
 	}
 	commandName := commandLineInput[1]
 	commandArgs := commandLineInput[2:]
-	cmd := command{name: commandName, args: commandArgs}
+	cmd := command{Name: commandName, Args: commandArgs}
 
 	//call command with arguments
-	if err = cmds.run(&s, cmd); err != nil {
-		fmt.Println("could not execute run command")
+	if err = cmds.run(s, cmd); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-type state struct {
-	config *config.Config
-}
-
+// -------------- handlers --------------//
 func handlerLogin(s *state, cmd command) error {
-	if len(cmd.args) == 0 {
+	if len(cmd.Args) == 0 {
 		return fmt.Errorf("expected arguments. No arguments provided")
 	}
 
-	if err := s.config.SetUser(cmd.args[0]); err != nil {
+	_, err := s.db.GetUser(context.Background(), cmd.Args[0])
+	if err != nil {
+		return fmt.Errorf("couldn't find user: %v", err)
+	}
+
+	if err := s.config.SetUser(cmd.Args[0]); err != nil {
 		fmt.Printf("unable to set user name, %v", err)
 		return err
 	}
@@ -63,9 +87,45 @@ func handlerLogin(s *state, cmd command) error {
 	return nil
 }
 
+func handlerRegister(s *state, cmd command) error {
+	/*The register function registers a new user. we first check if any arguments were passed.
+	then we check if the user provided is one that already exists
+	*/
+	if len(cmd.Args) == 0 {
+		return fmt.Errorf("expected arguments. No arguments provided")
+	}
+	now := time.Now()
+	id := uuid.New()
+	newUserParams := database.CreateUserParams{
+		ID:        id,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Name:      cmd.Args[0],
+	}
+	/* We create a new user and also use it as a way to check if a user already exist. if a
+	user already exists(duplicate records), we would get an error value
+	*/
+	newUser, err := s.db.CreateUser(context.Background(), newUserParams)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "DEBUG: Error creating user: %v\n", err)
+		return fmt.Errorf("failed to create new user. User might already exist %v", err)
+	}
+	/* We then set the username of the config to the name field of the newUser using the SetUser
+	function of the state passed to this handler
+	*/
+
+	if err := s.config.SetUser(newUser.Name); err != nil {
+		return fmt.Errorf("could not set current user %v", err)
+	}
+	// If all the checks have been successful, we print to the console that it was a success
+	fmt.Println("registered new user successfully")
+	return nil
+
+}
+
 type command struct {
-	name string
-	args []string
+	Name string
+	Args []string
 }
 
 type commands struct {
@@ -77,10 +137,10 @@ func (c *commands) register(name string, f func(*state, command) error) {
 }
 
 func (c *commands) run(s *state, cmd command) error {
-	handler, ok := c.handlersMap[cmd.name]
+	handler, ok := c.handlersMap[cmd.Name]
 	if !ok {
 		return fmt.Errorf("invalid command")
 	}
-	handler(s, cmd)
-	return nil
+	return handler(s, cmd)
+
 }
