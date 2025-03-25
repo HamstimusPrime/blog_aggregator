@@ -47,6 +47,7 @@ func main() {
 	}
 	cmds.register("login", handlerLogin)
 	cmds.register("register", handlerRegister)
+	cmds.register("reset", handlerReset)
 
 	//get the input from the command line when program runs
 	commandLineInput := os.Args
@@ -120,7 +121,17 @@ func handlerRegister(s *state, cmd command) error {
 	// If all the checks have been successful, we print to the console that it was a success
 	fmt.Println("registered new user successfully")
 	return nil
+}
 
+func handlerReset(s *state, cmd command) error {
+	/*your functions can call a query to the database using the queryname in the .sql file
+	e.g s.db.ResetUsers()
+	*/
+	if err := s.db.ResetUsers(context.Background()); err != nil {
+		return fmt.Errorf("unable to reset users table %v", err)
+	}
+	fmt.Println("database successfully reset")
+	return nil
 }
 
 type command struct {
