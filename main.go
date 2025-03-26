@@ -48,28 +48,44 @@ func main() {
 	cmds.register("login", handlerLogin)
 	cmds.register("register", handlerRegister)
 	cmds.register("reset", handlerReset)
+	cmds.register("users", handlerGetUsers)
 
 	//get the input from the command line when program runs
+	/*os.Args would have as its first value the address of the program,
+	its second item would be the name of the command(i.e register, login)
+	anything after that would be the extra arguments you provide*/
 	commandLineInput := os.Args
+	commandName := commandLineInput[1]
+	commandArgs := commandLineInput[2:]
+
+	//check if arguments are passed and if command used is valid
 	if len(commandLineInput) < 3 {
-		fmt.Println("error, no arguments provided")
-		os.Exit(1)
+		cmdsWithoutArgs := []string{"reset", "users"}
+		isValidCmd := false
+		for _, cmd := range cmdsWithoutArgs {
+			if commandName == cmd {
+				isValidCmd = true
+			}
+		}
+		if !isValidCmd {
+			fmt.Println("error, no arguments provided")
+			os.Exit(1)
+		}
+
 	}
 	if len(commandLineInput) > 3 {
 		fmt.Println("warning! multiple arguments provided, only first argument would be used")
 	}
-	commandName := commandLineInput[1]
-	commandArgs := commandLineInput[2:]
 	cmd := command{Name: commandName, Args: commandArgs}
 
-	//call command with arguments
+	//call command with arguments. run checks if command passed is a valid one.
 	if err = cmds.run(s, cmd); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// -------------- handlers --------------//
+// --------------------------------- handlers -------------------------------------------------//
 func handlerLogin(s *state, cmd command) error {
 	if len(cmd.Args) == 0 {
 		return fmt.Errorf("expected arguments. No arguments provided")
@@ -89,7 +105,7 @@ func handlerLogin(s *state, cmd command) error {
 }
 
 func handlerRegister(s *state, cmd command) error {
-	/*The register function registers a new user. we first check if any arguments were passed.
+	/*The register function registers a new user into the database. we first check if any arguments were passed.
 	then we check if the user provided is one that already exists
 	*/
 	if len(cmd.Args) == 0 {
@@ -134,6 +150,24 @@ func handlerReset(s *state, cmd command) error {
 	return nil
 }
 
+func handlerGetUsers(s *state, cmd command) error {
+	users, err := s.db.GetUsers(context.Background())
+	if err != nil {
+		return fmt.Errorf("unable to get users %v", err)
+	}
+	for _, username := range users {
+		if s.config.CurrentUserName == username {
+			fmt.Printf("%v (current)", username)
+		} else {
+			fmt.Println(username)
+		}
+
+	}
+	return nil
+}
+
+//---------------------------Handlers End---------------------------------------------------//
+
 type command struct {
 	Name string
 	Args []string
@@ -153,5 +187,4 @@ func (c *commands) run(s *state, cmd command) error {
 		return fmt.Errorf("invalid command")
 	}
 	return handler(s, cmd)
-
 }
