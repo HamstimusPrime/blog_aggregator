@@ -44,17 +44,30 @@ func main() {
 	}
 	cmds.register("login", handlerLogin)
 	cmds.register("register", handlerRegister)
+	cmds.register("reset", handlerReset)
+	cmds.register("users", handlerGetUsers)
 
 	commandLineInput := os.Args
+	commandName := commandLineInput[1]
+	commandArgs := commandLineInput[2:]
+
 	if len(commandLineInput) < 3 {
-		fmt.Println("error, no arguments provided")
-		os.Exit(1)
+		cmdsWithoutArgs := []string{"reset", "users"}
+		isValidCmd := false
+		for _, cmd := range cmdsWithoutArgs {
+			if commandName == cmd {
+				isValidCmd = true
+			}
+		}
+		if !isValidCmd {
+			fmt.Println("error, no arguments provided")
+			os.Exit(1)
+		}
+
 	}
 	if len(commandLineInput) > 3 {
 		fmt.Println("warning! multiple arguments provided, only first argument would be used")
 	}
-	commandName := commandLineInput[1]
-	commandArgs := commandLineInput[2:]
 	cmd := command{Name: commandName, Args: commandArgs}
 
 	if err = cmds.run(s, cmd); err != nil {
@@ -107,7 +120,31 @@ func handlerRegister(s *state, cmd command) error {
 
 	fmt.Println("registered new user successfully")
 	return nil
+}
 
+func handlerReset(s *state, cmd command) error {
+
+	if err := s.db.ResetUsers(context.Background()); err != nil {
+		return fmt.Errorf("unable to reset users table %v", err)
+	}
+	fmt.Println("database successfully reset")
+	return nil
+}
+
+func handlerGetUsers(s *state, cmd command) error {
+	users, err := s.db.GetUsers(context.Background())
+	if err != nil {
+		return fmt.Errorf("unable to get users %v", err)
+	}
+	for _, username := range users {
+		if s.config.CurrentUserName == username {
+			fmt.Printf("%v (current)", username)
+		} else {
+			fmt.Println(username)
+		}
+
+	}
+	return nil
 }
 
 type command struct {
@@ -129,5 +166,4 @@ func (c *commands) run(s *state, cmd command) error {
 		return fmt.Errorf("invalid command")
 	}
 	return handler(s, cmd)
-
 }
