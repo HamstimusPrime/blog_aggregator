@@ -46,13 +46,14 @@ func main() {
 	cmds.register("register", handlerRegister)
 	cmds.register("reset", handlerReset)
 	cmds.register("users", handlerGetUsers)
+	cmds.register("agg", handlerAggregate)
 
 	commandLineInput := os.Args
 	commandName := commandLineInput[1]
 	commandArgs := commandLineInput[2:]
 
 	if len(commandLineInput) < 3 {
-		cmdsWithoutArgs := []string{"reset", "users"}
+		cmdsWithoutArgs := []string{"reset", "users", "agg"}
 		isValidCmd := false
 		for _, cmd := range cmdsWithoutArgs {
 			if commandName == cmd {
@@ -146,6 +147,18 @@ func handlerGetUsers(s *state, cmd command) error {
 	}
 	return nil
 }
+
+func handlerAggregate(s *state, cmd command) error {
+	feedURL := "https://www.wagslane.dev/index.xml"
+	rssFeed, err := fetchFeed(context.Background(), feedURL)
+	if err != nil {
+		return fmt.Errorf("unable to run agg command %v", err)
+	}
+	fmt.Printf("%+v\n", rssFeed)
+	return nil
+}
+
+
 
 type command struct {
 	Name string
