@@ -47,6 +47,7 @@ func main() {
 	cmds.register("reset", handlerReset)
 	cmds.register("users", handlerGetUsers)
 	cmds.register("agg", handlerAggregate)
+	cmds.register("addfeed", handlerAddFeed)
 
 	commandLineInput := os.Args
 	commandName := commandLineInput[1]
@@ -158,7 +159,36 @@ func handlerAggregate(s *state, cmd command) error {
 	return nil
 }
 
+func handlerAddFeed(s *state, cmd command) error {
+	if len(cmd.Args) < 2 {
+		return fmt.Errorf("not enough arguments passed to command")
+	}
+	feedName := cmd.Args[0]
+	feedURL := cmd.Args[1]
+	loggedUser, err := s.db.GetUser(context.Background(), s.config.CurrentUserName)
+	if err != nil {
+		return fmt.Errorf("unable to get user %v", err)
+	}
+	feedParams := database.CreateFeedParams{
+		ID:        uuid.New(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Name:      feedName,
+		Url:       feedURL,
+		UserID:    loggedUser.ID,
+	}
+	feed, err := s.db.CreateFeed(context.Background(), feedParams)
+	if err != nil {
+		return fmt.Errorf("unable to add feed %v", err)
+	}
+	fmt.Println("Feed created successfully:")
+	fmt.Printf("ID: %s\n", feed.ID)
+	fmt.Printf("Name: %s\n", feed.Name)
+	fmt.Printf("Url: %s\n", feed.Url)
+	fmt.Printf("UserID: %s\n", feed.UserID)
 
+	return nil
+}
 
 type command struct {
 	Name string
