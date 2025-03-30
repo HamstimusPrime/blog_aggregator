@@ -50,6 +50,7 @@ func main() {
 	cmds.register("reset", handlerReset)
 	cmds.register("users", handlerGetUsers)
 	cmds.register("agg", handlerAggregate)
+	cmds.register("addfeed", handlerAddFeed)
 
 	//get the input from the command line when program runs
 	/*os.Args would have as its first value the address of the program,
@@ -168,12 +169,51 @@ func handlerGetUsers(s *state, cmd command) error {
 }
 
 func handlerAggregate(s *state, cmd command) error {
+	/*This function is responsible for getting and parsing
+	the data into an RSS Feed from a given url*/
 	feedURL := "https://www.wagslane.dev/index.xml"
 	rssFeed, err := fetchFeed(context.Background(), feedURL)
 	if err != nil {
 		return fmt.Errorf("unable to run agg command %v", err)
 	}
 	fmt.Printf("%+v\n", rssFeed)
+	return nil
+}
+
+func handlerAddFeed(s *state, cmd command) error {
+	/*this handler expects that a name and a url to the website we want a feed from is provided
+	we take the Name then user wants to name the url 'feedURL', the actual url of the feed, the userID of
+	the logged in user 'loggedUser' and use them to create an entry in the feeds table.
+	The actual feed(the RSS content) is handled by the handlerAggregate() funciton
+	*/
+	if len(cmd.Args) < 2 {
+		return fmt.Errorf("not enough arguments passed to command")
+	}
+	feedName := cmd.Args[0]
+	feedURL := cmd.Args[1]
+	//get data from the database where name matches. error out if no user found
+	loggedUser, err := s.db.GetUser(context.Background(), s.config.CurrentUserName)
+	if err != nil {
+		return fmt.Errorf("unable to get user %v", err)
+	}
+	feedParams := database.CreateFeedParams{
+		ID:        uuid.New(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Name:      feedName,
+		Url:       feedURL,
+		UserID:    loggedUser.ID,
+	}
+	feed, err := s.db.CreateFeed(context.Background(), feedParams)
+	if err != nil {
+		return fmt.Errorf("unable to add feed %v", err)
+	}
+	fmt.Println("Feed created successfully:")
+	fmt.Printf("ID: %s\n", feed.ID)
+	fmt.Printf("Name: %s\n", feed.Name)
+	fmt.Printf("Url: %s\n", feed.Url)
+	fmt.Printf("UserID: %s\n", feed.UserID)
+
 	return nil
 }
 
