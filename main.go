@@ -51,6 +51,7 @@ func main() {
 	cmds.register("users", handlerGetUsers)
 	cmds.register("agg", handlerAggregate)
 	cmds.register("addfeed", handlerAddFeed)
+	cmds.register("feeds", handlerDisplayFeeds)
 
 	//get the input from the command line when program runs
 	/*os.Args would have as its first value the address of the program,
@@ -59,27 +60,7 @@ func main() {
 	commandLineInput := os.Args
 	commandName := commandLineInput[1]
 	commandArgs := commandLineInput[2:]
-
-	//check if arguments are passed and if command used is valid
-	if len(commandLineInput) < 3 {
-		cmdsWithoutArgs := []string{"reset", "users", "agg"}
-		isValidCmd := false
-		for _, cmd := range cmdsWithoutArgs {
-			if commandName == cmd {
-				isValidCmd = true
-			}
-		}
-		if !isValidCmd {
-			fmt.Println("error, no arguments provided")
-			os.Exit(1)
-		}
-
-	}
-	if len(commandLineInput) > 3 {
-		fmt.Println("warning! multiple arguments provided, only first argument would be used")
-	}
 	cmd := command{Name: commandName, Args: commandArgs}
-
 	//call command with arguments. run checks if command passed is a valid one.
 	if err = cmds.run(s, cmd); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -89,8 +70,8 @@ func main() {
 
 // --------------------------------- handlers -------------------------------------------------//
 func handlerLogin(s *state, cmd command) error {
-	if len(cmd.Args) == 0 {
-		return fmt.Errorf("expected arguments. No arguments provided")
+	if err := containArgs(cmd); err != nil {
+		return err
 	}
 
 	_, err := s.db.GetUser(context.Background(), cmd.Args[0])
@@ -110,9 +91,10 @@ func handlerRegister(s *state, cmd command) error {
 	/*The register function registers a new user into the database. we first check if any arguments were passed.
 	then we check if the user provided is one that already exists
 	*/
-	if len(cmd.Args) == 0 {
-		return fmt.Errorf("expected arguments. No arguments provided")
+	if err := containArgs(cmd); err != nil {
+		return err
 	}
+
 	now := time.Now()
 	id := uuid.New()
 	newUserParams := database.CreateUserParams{
@@ -186,9 +168,10 @@ func handlerAddFeed(s *state, cmd command) error {
 	the logged in user 'loggedUser' and use them to create an entry in the feeds table.
 	The actual feed(the RSS content) is handled by the handlerAggregate() funciton
 	*/
-	if len(cmd.Args) < 2 {
-		return fmt.Errorf("not enough arguments passed to command")
+	if err := containArgs(cmd); err != nil {
+		return err
 	}
+
 	feedName := cmd.Args[0]
 	feedURL := cmd.Args[1]
 	//get data from the database where name matches. error out if no user found
@@ -214,6 +197,20 @@ func handlerAddFeed(s *state, cmd command) error {
 	fmt.Printf("Url: %s\n", feed.Url)
 	fmt.Printf("UserID: %s\n", feed.UserID)
 
+	return nil
+}
+
+func handlerDisplayFeeds(s *state, cmd command) error {
+	feeds, err := s.db.GetFeeds(context.Background())
+	if err != nil {
+		return fmt.Errorf("unable to get feeds %v", err)
+	}
+	for _, feed := range feeds {
+		fmt.Printf("feed Name: %v\n", feed.Feedname)
+		fmt.Printf("url: %v\n", feed.Url)
+		fmt.Printf("username: %v\n", feed.Username)
+
+	}
 	return nil
 }
 
