@@ -48,30 +48,12 @@ func main() {
 	cmds.register("users", handlerGetUsers)
 	cmds.register("agg", handlerAggregate)
 	cmds.register("addfeed", handlerAddFeed)
+	cmds.register("feeds", handlerDisplayFeeds)
 
 	commandLineInput := os.Args
 	commandName := commandLineInput[1]
 	commandArgs := commandLineInput[2:]
-
-	if len(commandLineInput) < 3 {
-		cmdsWithoutArgs := []string{"reset", "users", "agg"}
-		isValidCmd := false
-		for _, cmd := range cmdsWithoutArgs {
-			if commandName == cmd {
-				isValidCmd = true
-			}
-		}
-		if !isValidCmd {
-			fmt.Println("error, no arguments provided")
-			os.Exit(1)
-		}
-
-	}
-	if len(commandLineInput) > 3 {
-		fmt.Println("warning! multiple arguments provided, only first argument would be used")
-	}
 	cmd := command{Name: commandName, Args: commandArgs}
-
 	if err = cmds.run(s, cmd); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -79,8 +61,8 @@ func main() {
 }
 
 func handlerLogin(s *state, cmd command) error {
-	if len(cmd.Args) == 0 {
-		return fmt.Errorf("expected arguments. No arguments provided")
+	if err := containArgs(cmd); err != nil {
+		return err
 	}
 
 	_, err := s.db.GetUser(context.Background(), cmd.Args[0])
@@ -97,10 +79,10 @@ func handlerLogin(s *state, cmd command) error {
 }
 
 func handlerRegister(s *state, cmd command) error {
-
-	if len(cmd.Args) == 0 {
-		return fmt.Errorf("expected arguments. No arguments provided")
+	if err := containArgs(cmd); err != nil {
+		return err
 	}
+
 	now := time.Now()
 	id := uuid.New()
 	newUserParams := database.CreateUserParams{
@@ -160,9 +142,10 @@ func handlerAggregate(s *state, cmd command) error {
 }
 
 func handlerAddFeed(s *state, cmd command) error {
-	if len(cmd.Args) < 2 {
-		return fmt.Errorf("not enough arguments passed to command")
+	if err := containArgs(cmd); err != nil {
+		return err
 	}
+
 	feedName := cmd.Args[0]
 	feedURL := cmd.Args[1]
 	loggedUser, err := s.db.GetUser(context.Background(), s.config.CurrentUserName)
@@ -187,6 +170,20 @@ func handlerAddFeed(s *state, cmd command) error {
 	fmt.Printf("Url: %s\n", feed.Url)
 	fmt.Printf("UserID: %s\n", feed.UserID)
 
+	return nil
+}
+
+func handlerDisplayFeeds(s *state, cmd command) error {
+	feeds, err := s.db.GetFeeds(context.Background())
+	if err != nil {
+		return fmt.Errorf("unable to get feeds %v", err)
+	}
+	for _, feed := range feeds {
+		fmt.Printf("feed Name: %v\n", feed.Feedname)
+		fmt.Printf("url: %v\n", feed.Url)
+		fmt.Printf("username: %v\n", feed.Username)
+
+	}
 	return nil
 }
 
