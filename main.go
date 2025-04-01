@@ -49,6 +49,8 @@ func main() {
 	cmds.register("agg", handlerAggregate)
 	cmds.register("addfeed", handlerAddFeed)
 	cmds.register("feeds", handlerDisplayFeeds)
+	cmds.register("follow", handlerFollow)
+	cmds.register("following", handlerFollowing)
 
 	commandLineInput := os.Args
 	commandName := commandLineInput[1]
@@ -164,6 +166,12 @@ func handlerAddFeed(s *state, cmd command) error {
 	if err != nil {
 		return fmt.Errorf("unable to add feed %v", err)
 	}
+	cmd.Args[0] = cmd.Args[1]
+	if err := handlerFollow(s, cmd); err != nil {
+		fmt.Println("unable to create entry to feedfollow ")
+		return err
+	}
+
 	fmt.Println("Feed created successfully:")
 	fmt.Printf("ID: %s\n", feed.ID)
 	fmt.Printf("Name: %s\n", feed.Name)
@@ -183,6 +191,56 @@ func handlerDisplayFeeds(s *state, cmd command) error {
 		fmt.Printf("url: %v\n", feed.Url)
 		fmt.Printf("username: %v\n", feed.Username)
 
+	}
+	return nil
+}
+func handlerFollow(s *state, cmd command) error {
+	if err := containArgs(cmd); err != nil {
+		return err
+	}
+	url := cmd.Args[0]
+	loggedInUserName := s.config.CurrentUserName
+	user, err := s.db.GetUser(context.Background(), loggedInUserName)
+	if err != nil {
+		return err
+	}
+	feed, err := s.db.GetFeedByURL(context.Background(), url)
+	if err != nil {
+		fmt.Printf("unable to fetch feed from database %v\n", err)
+		return err
+	}
+
+	params := database.CreateFeedFollowParams{
+		ID:        uuid.New(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		UserID:    user.ID,
+		FeedID:    feed.ID,
+	}
+	feedFollow, err := s.db.CreateFeedFollow(context.Background(), params)
+	if err != nil {
+		fmt.Printf("unable to create entry into feedFollow table %v\n", err)
+		return err
+	}
+	fmt.Printf("current user: %v just followed %v\n", feedFollow.UserName, feedFollow.FeedName)
+	return nil
+}
+
+func handlerFollowing(s *state, cmd command) error {
+	loggedInUserName := s.config.CurrentUserName
+	user, err := s.db.GetUser(context.Background(), loggedInUserName)
+	if err != nil {
+		fmt.Println("unable to get user")
+		return err
+	}
+	followsList, err := s.db.GetFeedFollowsForUser(context.Background(), user.ID)
+	if err != nil {
+		fmt.Println("could not fetch list of followed feeds")
+		return err
+	}
+	fmt.Println("feeds you follow: ")
+	for _, followsRow := range followsList {
+		fmt.Printf("	- %v\n", followsRow.FeedName)
 	}
 	return nil
 }
