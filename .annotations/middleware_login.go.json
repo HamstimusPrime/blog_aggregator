@@ -1,0 +1,12 @@
+{
+  "originalContent": "package main\n\nimport (\n\t\"context\"\n\n\t\"github.com/hamstimusprime/blog_aggregator/internal/database\"\n)\n\n/*\nthis middleware accepts gets info from the database about the currently\nloggedIn user and then passes that user info(users) to a handler function which it\nthen returns. the returned handler function contaning data about the user is used\nin handler functions that need to use data of the currently logged in user\n*/\nfunc middlewareLoggedIn(handler func(s *state, cmd command, user database.User) error) func(*state, command) error {\n\treturn func(s *state, cmd command) error {\n\t\tuser, err := s.db.GetUser(context.Background(), s.config.CurrentUserName)\n\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n\t\treturn handler(s, cmd, user)\n\t}\n}\n",
+  "comments": [
+    {
+      "text": "/*\nthis middleware accepts gets info from the database about the currently\nloggedIn user and then passes that user info(users) to a handler function which it\nthen returns. the returned handler function contaning data about the user is used\nin handler functions that need to use data of the currently logged in user\n*/",
+      "line": 8,
+      "start": 101,
+      "end": 418
+    }
+  ],
+  "filePath": "middleware_login.go"
+}
