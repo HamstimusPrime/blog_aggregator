@@ -51,6 +51,7 @@ func main() {
 	cmds.register("feeds", handlerDisplayFeeds)
 	cmds.register("follow", middlewareLoggedIn(handlerFollow))
 	cmds.register("following", middlewareLoggedIn(handlerFollowing))
+	cmds.register("unfollow", middlewareLoggedIn(handlerUnfollowFeed))
 
 	commandLineInput := os.Args
 	commandName := commandLineInput[1]
@@ -238,6 +239,19 @@ func handlerFollowing(s *state, cmd command, user database.User) error {
 	fmt.Println("feeds you follow: ")
 	for _, followsRow := range followsList {
 		fmt.Printf("	- %v\n", followsRow.FeedName)
+	}
+	return nil
+}
+
+func handlerUnfollowFeed(s *state, cmd command, user database.User) error {
+	url := cmd.Args[0]
+	deleteParams := database.DeleteFeedFollowParams{
+		UserID: user.ID,
+		Url:    url,
+	}
+	if err := s.db.DeleteFeedFollow(context.Background(), deleteParams); err != nil {
+		fmt.Println("unfollow feed operation failed")
+		return err
 	}
 	return nil
 }
