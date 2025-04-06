@@ -1,5 +1,5 @@
 {
-  "originalContent": "package main\n\nimport (\n\t\"context\"\n\t\"database/sql\"\n\t\"fmt\"\n\t\"log\"\n\t\"os\"\n\t\"time\"\n\n\t\"github.com/google/uuid\"\n\t\"github.com/hamstimusprime/blog_aggregator/internal/config\"\n\t\"github.com/hamstimusprime/blog_aggregator/internal/database\"\n\t_ \"github.com/lib/pq\"\n)\n\ntype state struct {\n\tconfig *config.Config\n\tdb     *database.Queries\n}\n\nfunc main() {\n\t//read config file from disk and store in cfg\n\tcfg, err := config.Read()\n\tif err != nil {\n\t\tfmt.Printf(\"error reading config file: %v\", err)\n\t\treturn\n\t}\n\n\t//connect to database\n\tdb, err := sql.Open(\"postgres\", cfg.DbURL)\n\tif err != nil {\n\t\tlog.Fatalf(\"error connecting to database, %v\", err)\n\t}\n\tdbQueries := database.New(db)\n\tdefer db.Close()\n\n\t//store config in a state struct\n\ts := &state{\n\t\tconfig: &cfg,\n\t\tdb:     dbQueries,\n\t}\n\n\t//create a new instance of the commands map and store handler functions inside of it\n\tcmds := commands{\n\t\thandlersMap: make(map[string]func(*state, command) error),\n\t}\n\tcmds.register(\"login\", handlerLogin)\n\tcmds.register(\"register\", handlerRegister)\n\tcmds.register(\"reset\", handlerReset)\n\tcmds.register(\"users\", handlerGetUsers)\n\tcmds.register(\"agg\", handlerAggregate)\n\tcmds.register(\"addfeed\", middlewareLoggedIn(handlerAddFeed))\n\tcmds.register(\"feeds\", handlerDisplayFeeds)\n\tcmds.register(\"follow\", middlewareLoggedIn(handlerFollow))\n\tcmds.register(\"following\", middlewareLoggedIn(handlerFollowing))\n\tcmds.register(\"unfollow\", middlewareLoggedIn(handlerUnfollowFeed))\n\t//get the input from the command line when program runs\n\t/*os.Args would have as its first value the address of the program,\n\tits second item would be the name of the command(i.e register, login)\n\tanything after that would be the extra arguments you provide*/\n\tcommandLineInput := os.Args\n\tcommandName := commandLineInput[1]\n\tcommandArgs := commandLineInput[2:]\n\tcmd := command{Name: commandName, Args: commandArgs}\n\t//call command with arguments. run checks if command passed is a valid one.\n\tif err = cmds.run(s, cmd); err != nil {\n\t\tfmt.Fprintf(os.Stderr, \"Error: %v\\n\", err)\n\t\tos.Exit(1)\n\t}\n}\n\n// --------------------------------- handlers -------------------------------------------------//\nfunc handlerLogin(s *state, cmd command) error {\n\tif err := containArgs(cmd); err != nil {\n\t\treturn err\n\t}\n\n\t_, err := s.db.GetUser(context.Background(), cmd.Args[0])\n\tif err != nil {\n\t\treturn fmt.Errorf(\"couldn't find user: %v\", err)\n\t}\n\n\tif err := s.config.SetUser(cmd.Args[0]); err != nil {\n\t\tfmt.Printf(\"unable to set user name, %v\", err)\n\t\treturn err\n\t}\n\tfmt.Println(\"username has been set\")\n\treturn nil\n}\n\nfunc handlerRegister(s *state, cmd command) error {\n\t/*The register function registers a new user into the database. we first check if any arguments were passed.\n\tthen we check if the user provided is one that already exists\n\t*/\n\tif err := containArgs(cmd); err != nil {\n\t\treturn err\n\t}\n\n\tnow := time.Now()\n\tid := uuid.New()\n\tnewUserParams := database.CreateUserParams{\n\t\tID:        id,\n\t\tCreatedAt: now,\n\t\tUpdatedAt: now,\n\t\tName:      cmd.Args[0],\n\t}\n\t/* We create a new user and also use it as a way to check if a user already exist. if a\n\tuser already exists(duplicate records), we would get an error value\n\t*/\n\tnewUser, err := s.db.CreateUser(context.Background(), newUserParams)\n\tif err != nil {\n\t\tfmt.Fprintf(os.Stderr, \"DEBUG: Error creating user: %v\\n\", err)\n\t\treturn fmt.Errorf(\"failed to create new user. User might already exist %v\", err)\n\t}\n\t/* We then set the username of the config to the name field of the newUser using the SetUser\n\tfunction of the state passed to this handler\n\t*/\n\n\tif err := s.config.SetUser(newUser.Name); err != nil {\n\t\treturn fmt.Errorf(\"could not set current user %v\", err)\n\t}\n\t// If all the checks have been successful, we print to the console that it was a success\n\tfmt.Println(\"registered new user successfully\")\n\treturn nil\n}\n\nfunc handlerReset(s *state, cmd command) error {\n\t/*your functions can call a query to the database using the queryname in the .sql file\n\te.g s.db.ResetUsers()\n\t*/\n\tif err := s.db.ResetUsers(context.Background()); err != nil {\n\t\treturn fmt.Errorf(\"unable to reset users table %v\", err)\n\t}\n\tfmt.Println(\"database successfully reset\")\n\treturn nil\n}\n\nfunc handlerGetUsers(s *state, cmd command) error {\n\tusers, err := s.db.GetUsers(context.Background())\n\tif err != nil {\n\t\treturn fmt.Errorf(\"unable to get users %v\", err)\n\t}\n\tfor _, username := range users {\n\t\tif s.config.CurrentUserName == username {\n\t\t\tfmt.Printf(\"%v (current)\", username)\n\t\t} else {\n\t\t\tfmt.Println(username)\n\t\t}\n\n\t}\n\treturn nil\n}\n\nfunc handlerAggregate(s *state, cmd command) error {\n\t/*This function is responsible for getting and parsing\n\tthe data into an RSS Feed from a given url*/\n\tfeedURL := \"https://www.wagslane.dev/index.xml\"\n\trssFeed, err := fetchFeed(context.Background(), feedURL)\n\tif err != nil {\n\t\treturn fmt.Errorf(\"unable to run agg command %v\", err)\n\t}\n\tfmt.Printf(\"%+v\\n\", rssFeed)\n\treturn nil\n}\n\nfunc handlerAddFeed(s *state, cmd command, user database.User) error {\n\t/*this handler expects that a name and a url to the website we want a feed from is provided\n\twe take the Name the user wants to name the url 'feedURL', the actual url of the feed, the userID of\n\tthe logged in user 'loggedUser' and use them to create an entry in the feeds table.\n\tThe actual feed(the RSS content) is handled by the handlerAggregate() funciton\n\t*/\n\tif err := containArgs(cmd); err != nil {\n\t\treturn err\n\t}\n\n\tfeedName := cmd.Args[0]\n\tfeedURL := cmd.Args[1]\n\t//get data from the database where name matches. error out if no user found\n\tloggedUser := user\n\tfeedParams := database.CreateFeedParams{\n\t\tID:        uuid.New(),\n\t\tCreatedAt: time.Now(),\n\t\tUpdatedAt: time.Now(),\n\t\tName:      feedName,\n\t\tUrl:       feedURL,\n\t\tUserID:    loggedUser.ID,\n\t}\n\tfeed, err := s.db.CreateFeed(context.Background(), feedParams)\n\tif err != nil {\n\t\treturn fmt.Errorf(\"unable to add feed %v\", err)\n\t}\n\t/*we also want an entry into the feedfollow table whenver a user creates adds a new feed\n\tin order to register that the current user follows the feed. we do this by using the\n\thandlerFollow funciton*/\n\tcmd.Args[0] = cmd.Args[1]\n\tif err := handlerFollow(s, cmd, user); err != nil {\n\t\tfmt.Println(\"unable to create entry to feedfollow \")\n\t\treturn err\n\t}\n\n\tfmt.Println(\"Feed created successfully:\")\n\tfmt.Printf(\"ID: %s\\n\", feed.ID)\n\tfmt.Printf(\"Name: %s\\n\", feed.Name)\n\tfmt.Printf(\"Url: %s\\n\", feed.Url)\n\tfmt.Printf(\"UserID: %s\\n\", feed.UserID)\n\n\treturn nil\n}\n\nfunc handlerDisplayFeeds(s *state, cmd command) error {\n\tfeeds, err := s.db.GetFeeds(context.Background())\n\tif err != nil {\n\t\treturn fmt.Errorf(\"unable to get feeds %v\", err)\n\t}\n\tfor _, feed := range feeds {\n\t\tfmt.Printf(\"feed Name: %v\\n\", feed.Feedname)\n\t\tfmt.Printf(\"url: %v\\n\", feed.Url)\n\t\tfmt.Printf(\"username: %v\\n\", feed.Username)\n\n\t}\n\treturn nil\n}\nfunc handlerFollow(s *state, cmd command, user database.User) error {\n\t/*this function takes a url as argument and creates an entry into feedFollow table using\n\tthe CreateFeedFollow funtion generated by sqlc. the feedFollow table is a table\n\tthat links the feeds and users table it creates this entry into the DB based off of\n\tthe currently logged in user*/\n\tif err := containArgs(cmd); err != nil {\n\t\treturn err\n\t}\n\turl := cmd.Args[0]\n\t//get all entries of current logged in  user fron the users table\n\t//get feed associated with the url passed\n\tfeed, err := s.db.GetFeedByURL(context.Background(), url)\n\tif err != nil {\n\t\tfmt.Printf(\"unable to fetch feed from database %v\\n\", err)\n\t\treturn err\n\t}\n\n\tparams := database.CreateFeedFollowParams{\n\t\tID:        uuid.New(),\n\t\tCreatedAt: time.Now(),\n\t\tUpdatedAt: time.Now(),\n\t\tUserID:    user.ID,\n\t\tFeedID:    feed.ID,\n\t}\n\t/*create entry into feed follow table. the query that makes the entry, also returns the\n\tName of the feed AND the Username of the user who made the field\n\t*/\n\tfeedFollow, err := s.db.CreateFeedFollow(context.Background(), params)\n\tif err != nil {\n\t\tfmt.Printf(\"unable to create entry into feedFollow table %v\\n\", err)\n\t\treturn err\n\t}\n\t//if entry created was successful, we need to print the name of the feed and name of the current user\n\tfmt.Printf(\"current user: %v just followed %v\\n\", feedFollow.UserName, feedFollow.FeedName)\n\treturn nil\n}\n\nfunc handlerFollowing(s *state, cmd command, user database.User) error {\n\t/*prints all the feedNames that the currently logged in user follows\n\twe need to get the userID of the currently logged in user and then use that to\n\tquery the  feed follow table. The GetFeedFollowForUser function does that*/\n\tfollowsList, err := s.db.GetFeedFollowsForUser(context.Background(), user.ID)\n\tif err != nil {\n\t\tfmt.Println(\"could not fetch list of followed feeds\")\n\t\treturn err\n\t}\n\tfmt.Println(\"feeds you follow: \")\n\tfor _, followsRow := range followsList {\n\t\tfmt.Printf(\"\t- %v\\n\", followsRow.FeedName)\n\t}\n\treturn nil\n}\n\nfunc handlerUnfollowFeed(s *state, cmd command, user database.User) error {\n\turl := cmd.Args[0]\n\tdeleteParams := database.DeleteFeedFollowParams{\n\t\tUserID: user.ID,\n\t\tUrl:    url,\n\t}\n\tif err := s.db.DeleteFeedFollow(context.Background(), deleteParams); err != nil {\n\t\tfmt.Println(\"unfollow feed operation failed\")\n\t\treturn err\n\t}\n\treturn nil\n}\n\n//---------------------------Handlers End---------------------------------------------------//\n\ntype command struct {\n\tName string\n\tArgs []string\n}\n\ntype commands struct {\n\thandlersMap map[string]func(*state, command) error\n}\n\nfunc (c *commands) register(name string, f func(*state, command) error) {\n\tc.handlersMap[name] = f\n}\n\nfunc (c *commands) run(s *state, cmd command) error {\n\thandler, ok := c.handlersMap[cmd.Name]\n\tif !ok {\n\t\treturn fmt.Errorf(\"invalid command\")\n\t}\n\treturn handler(s, cmd)\n}\n",
+  "originalContent": "package main\n\nimport (\n\t\"context\"\n\t\"database/sql\"\n\t\"fmt\"\n\t\"log\"\n\t\"os\"\n\t\"time\"\n\n\t\"github.com/google/uuid\"\n\t\"github.com/hamstimusprime/blog_aggregator/internal/config\"\n\t\"github.com/hamstimusprime/blog_aggregator/internal/database\"\n\t_ \"github.com/lib/pq\"\n)\n\ntype state struct {\n\tconfig *config.Config\n\tdb     *database.Queries\n}\n\nfunc main() {\n\t//read config file from disk and store in cfg\n\tcfg, err := config.Read()\n\tif err != nil {\n\t\tfmt.Printf(\"error reading config file: %v\", err)\n\t\treturn\n\t}\n\n\t//connect to database\n\tdb, err := sql.Open(\"postgres\", cfg.DbURL)\n\tif err != nil {\n\t\tlog.Fatalf(\"error connecting to database, %v\", err)\n\t}\n\tdbQueries := database.New(db)\n\tdefer db.Close()\n\n\t//store config in a state struct\n\ts := &state{\n\t\tconfig: &cfg,\n\t\tdb:     dbQueries,\n\t}\n\n\t//create a new instance of the commands map and store handler functions inside of it\n\tcmds := commands{\n\t\thandlersMap: make(map[string]func(*state, command) error),\n\t}\n\tcmds.register(\"login\", handlerLogin)\n\tcmds.register(\"register\", handlerRegister)\n\tcmds.register(\"reset\", handlerReset)\n\tcmds.register(\"users\", handlerGetUsers)\n\tcmds.register(\"agg\", handlerAggregate)\n\tcmds.register(\"addfeed\", middlewareLoggedIn(handlerAddFeed))\n\tcmds.register(\"feeds\", handlerDisplayFeeds)\n\tcmds.register(\"follow\", middlewareLoggedIn(handlerFollow))\n\tcmds.register(\"following\", middlewareLoggedIn(handlerFollowing))\n\tcmds.register(\"unfollow\", middlewareLoggedIn(handlerUnfollowFeed))\n\t//get the input from the command line when program runs\n\t/*os.Args would have as its first value the address of the program,\n\tits second item would be the name of the command(i.e register, login)\n\tanything after that would be the extra arguments you provide*/\n\tcommandLineInput := os.Args\n\tcommandName := commandLineInput[1]\n\tcommandArgs := commandLineInput[2:]\n\tcmd := command{Name: commandName, Args: commandArgs}\n\t//call command with arguments. run checks if command passed is a valid one.\n\tif err = cmds.run(s, cmd); err != nil {\n\t\tfmt.Fprintf(os.Stderr, \"Error: %v\\n\", err)\n\t\tos.Exit(1)\n\t}\n}\n\n// --------------------------------- handlers -------------------------------------------------//\nfunc handlerLogin(s *state, cmd command) error {\n\tif err := containArgs(cmd); err != nil {\n\t\treturn err\n\t}\n\n\t_, err := s.db.GetUser(context.Background(), cmd.Args[0])\n\tif err != nil {\n\t\tfmt.Println(\"couldn't find user\")\n\t\treturn err\n\t}\n\n\tif err := s.config.SetUser(cmd.Args[0]); err != nil {\n\t\tfmt.Printf(\"unable to set user name, %v\", err)\n\t\treturn err\n\t}\n\tfmt.Printf(\"username: %v is logged in\\n\", cmd.Args[0])\n\treturn nil\n}\n\nfunc handlerRegister(s *state, cmd command) error {\n\t/*The register function registers a new user into the database. we first check if any arguments were passed.\n\tthen we check if the user provided is one that already exists\n\t*/\n\tif err := containArgs(cmd); err != nil {\n\t\treturn err\n\t}\n\n\tnow := time.Now()\n\tid := uuid.New()\n\tnewUserParams := database.CreateUserParams{\n\t\tID:        id,\n\t\tCreatedAt: now,\n\t\tUpdatedAt: now,\n\t\tName:      cmd.Args[0],\n\t}\n\t/* We create a new user and also use it as a way to check if a user already exist. if a\n\tuser already exists(duplicate records), we would get an error value\n\t*/\n\tnewUser, err := s.db.CreateUser(context.Background(), newUserParams)\n\tif err != nil {\n\t\tfmt.Fprintf(os.Stderr, \"DEBUG: Error creating user: %v\\n\", err)\n\t\treturn fmt.Errorf(\"failed to create new user. User might already exist %v\", err)\n\t}\n\t/* We then set the username of the config to the name field of the newUser using the SetUser\n\tfunction of the state passed to this handler\n\t*/\n\n\tif err := s.config.SetUser(newUser.Name); err != nil {\n\t\treturn fmt.Errorf(\"could not set current user %v\", err)\n\t}\n\t// If all the checks have been successful, we print to the console that it was a success\n\tfmt.Println(\"registered new user successfully\")\n\treturn nil\n}\n\nfunc handlerReset(s *state, cmd command) error {\n\t/*your functions can call a query to the database using the queryname in the .sql file\n\te.g s.db.ResetUsers()\n\t*/\n\tif err := s.db.ResetUsers(context.Background()); err != nil {\n\t\treturn fmt.Errorf(\"unable to reset users table %v\", err)\n\t}\n\tfmt.Println(\"database successfully reset\")\n\treturn nil\n}\n\nfunc handlerGetUsers(s *state, cmd command) error {\n\tusers, err := s.db.GetUsers(context.Background())\n\tif err != nil {\n\t\treturn fmt.Errorf(\"unable to get users %v\", err)\n\t}\n\tif len(users) == 0 {\n\t\tfmt.Println(\"no user has been added\")\n\t\treturn nil\n\t}\n\tfor _, username := range users {\n\t\tif s.config.CurrentUserName == username {\n\t\t\tfmt.Printf(\"%v (current)\\n\", username)\n\t\t} else {\n\t\t\tfmt.Println(username)\n\t\t}\n\n\t}\n\treturn nil\n}\n\nfunc handlerAggregate(s *state, cmd command) error {\n\t/*this function expects an argument when it's command is used by the user.\n\tthe expected command is a time in seconds that we want the program to fetch feeds.\n\tWe first take the arguments provided and then parse it into a time.Duration type*/\n\tif err := containArgs(cmd); err != nil {\n\t\treturn err\n\t}\n\ttimeBetweenRequests, err := time.ParseDuration(cmd.Args[0])\n\tif err != nil {\n\t\treturn err\n\t}\n\tfmt.Printf(\"Collecting feeds every %v\", timeBetweenRequests)\n\n\tticker := time.NewTicker(timeBetweenRequests)\n\tfor ; ; <-ticker.C {\n\t\terr := scrapeFeeds(s)\n\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n\t}\n\n}\n\nfunc handlerAddFeed(s *state, cmd command, user database.User) error {\n\t/*this handler expects that a name and a url to the website we want a feed from is provided\n\twe take the Name the user wants to name the url 'feedURL', the actual url of the feed, the userID of\n\tthe logged in user 'loggedUser' and use them to create an entry in the feeds table.\n\tThe actual feed(the RSS content) is handled by the handlerAggregate() funciton\n\t*/\n\tif err := containArgs(cmd); err != nil {\n\t\treturn err\n\t}\n\n\tfeedName := cmd.Args[0]\n\tfeedURL := cmd.Args[1]\n\t//get data from the database where name matches. error out if no user found\n\tloggedUser := user\n\tfeedParams := database.CreateFeedParams{\n\t\tID:        uuid.New(),\n\t\tCreatedAt: time.Now(),\n\t\tUpdatedAt: time.Now(),\n\t\tName:      feedName,\n\t\tUrl:       feedURL,\n\t\tUserID:    loggedUser.ID,\n\t}\n\tfeed, err := s.db.CreateFeed(context.Background(), feedParams)\n\tif err != nil {\n\t\treturn fmt.Errorf(\"unable to add feed %v\", err)\n\t}\n\t/*we also want an entry into the feedfollow table whenver a user creates adds a new feed\n\tin order to register that the current user follows the feed. we do this by using the\n\thandlerFollow funciton*/\n\tcmd.Args[0] = cmd.Args[1]\n\tif err := handlerFollow(s, cmd, user); err != nil {\n\t\tfmt.Println(\"unable to create entry to feedfollow \")\n\t\treturn err\n\t}\n\n\tfmt.Println(\"Feed created successfully:\")\n\tfmt.Printf(\"ID: %s\\n\", feed.ID)\n\tfmt.Printf(\"Name: %s\\n\", feed.Name)\n\tfmt.Printf(\"Url: %s\\n\", feed.Url)\n\tfmt.Printf(\"UserID: %s\\n\", feed.UserID)\n\n\treturn nil\n}\n\nfunc handlerDisplayFeeds(s *state, cmd command) error {\n\tfeeds, err := s.db.GetFeeds(context.Background())\n\tif err != nil {\n\t\treturn fmt.Errorf(\"unable to get feeds %v\", err)\n\t}\n\tfor _, feed := range feeds {\n\t\tfmt.Printf(\"feed Name: %v\\n\", feed.Feedname)\n\t\tfmt.Printf(\"url: %v\\n\", feed.Url)\n\t\tfmt.Printf(\"username: %v\\n\", feed.Username)\n\n\t}\n\treturn nil\n}\nfunc handlerFollow(s *state, cmd command, user database.User) error {\n\t/*this function takes a url as argument and creates an entry into feedFollow table using\n\tthe CreateFeedFollow funtion generated by sqlc. the feedFollow table is a table\n\tthat links the feeds and users table it creates this entry into the DB based off of\n\tthe currently logged in user*/\n\tif err := containArgs(cmd); err != nil {\n\t\treturn err\n\t}\n\turl := cmd.Args[0]\n\t//get all entries of current logged in  user fron the users table\n\t//get feed associated with the url passed\n\tfeed, err := s.db.GetFeedByURL(context.Background(), url)\n\tif err != nil {\n\t\tfmt.Printf(\"unable to fetch feed from database %v\\n\", err)\n\t\treturn err\n\t}\n\n\tparams := database.CreateFeedFollowParams{\n\t\tID:        uuid.New(),\n\t\tCreatedAt: time.Now(),\n\t\tUpdatedAt: time.Now(),\n\t\tUserID:    user.ID,\n\t\tFeedID:    feed.ID,\n\t}\n\t/*create entry into feed follow table. the query that makes the entry, also returns the\n\tName of the feed AND the Username of the user who made the field\n\t*/\n\tfeedFollow, err := s.db.CreateFeedFollow(context.Background(), params)\n\tif err != nil {\n\t\tfmt.Printf(\"unable to create entry into feedFollow table %v\\n\", err)\n\t\treturn err\n\t}\n\t//if entry created was successful, we need to print the name of the feed and name of the current user\n\tfmt.Printf(\"current user: %v just followed %v\\n\", feedFollow.UserName, feedFollow.FeedName)\n\treturn nil\n}\n\nfunc handlerFollowing(s *state, cmd command, user database.User) error {\n\t/*prints all the feedNames that the currently logged in user follows\n\twe need to get the userID of the currently logged in user and then use that to\n\tquery the  feed follow table. The GetFeedFollowForUser function does that*/\n\tfollowsList, err := s.db.GetFeedFollowsForUser(context.Background(), user.ID)\n\tif err != nil {\n\t\tfmt.Println(\"could not fetch list of followed feeds\")\n\t\treturn err\n\t}\n\tfmt.Println(\"feeds you follow: \")\n\tfor _, followsRow := range followsList {\n\t\tfmt.Printf(\"\t- %v\\n\", followsRow.FeedName)\n\t}\n\treturn nil\n}\n\nfunc handlerUnfollowFeed(s *state, cmd command, user database.User) error {\n\turl := cmd.Args[0]\n\tdeleteParams := database.DeleteFeedFollowParams{\n\t\tUserID: user.ID,\n\t\tUrl:    url,\n\t}\n\tif err := s.db.DeleteFeedFollow(context.Background(), deleteParams); err != nil {\n\t\tfmt.Println(\"unfollow feed operation failed\")\n\t\treturn err\n\t}\n\treturn nil\n}\n\n//---------------------------Handlers End---------------------------------------------------//\n\ntype command struct {\n\tName string\n\tArgs []string\n}\n\ntype commands struct {\n\thandlersMap map[string]func(*state, command) error\n}\n\nfunc (c *commands) register(name string, f func(*state, command) error) {\n\tc.handlersMap[name] = f\n}\n\nfunc (c *commands) run(s *state, cmd command) error {\n\thandler, ok := c.handlersMap[cmd.Name]\n\tif !ok {\n\t\treturn fmt.Errorf(\"invalid command\")\n\t}\n\treturn handler(s, cmd)\n}\n",
   "comments": [
     {
       "text": "//read config file from disk and store in cfg",
@@ -51,99 +51,99 @@
     },
     {
       "text": "/*The register function registers a new user into the database. we first check if any arguments were passed.\n\tthen we check if the user provided is one that already exists\n\t*/",
-      "line": 92,
-      "start": 2609,
-      "end": 2784
+      "line": 93,
+      "start": 2625,
+      "end": 2800
     },
     {
       "text": "/* We create a new user and also use it as a way to check if a user already exist. if a\n\tuser already exists(duplicate records), we would get an error value\n\t*/",
-      "line": 107,
-      "start": 3009,
-      "end": 3169
+      "line": 108,
+      "start": 3025,
+      "end": 3185
     },
     {
       "text": "/* We then set the username of the config to the name field of the newUser using the SetUser\n\tfunction of the state passed to this handler\n\t*/",
-      "line": 115,
-      "start": 3410,
-      "end": 3552
+      "line": 116,
+      "start": 3426,
+      "end": 3568
     },
     {
       "text": "// If all the checks have been successful, we print to the console that it was a success",
-      "line": 122,
-      "start": 3672,
-      "end": 3760
+      "line": 123,
+      "start": 3688,
+      "end": 3776
     },
     {
       "text": "/*your functions can call a query to the database using the queryname in the .sql file\n\te.g s.db.ResetUsers()\n\t*/",
-      "line": 128,
-      "start": 3875,
-      "end": 3988
+      "line": 129,
+      "start": 3891,
+      "end": 4004
     },
     {
-      "text": "/*This function is responsible for getting and parsing\n\tthe data into an RSS Feed from a given url*/",
-      "line": 155,
-      "start": 4578,
-      "end": 4678
+      "text": "/*this function expects an argument when it's command is used by the user.\n\tthe expected command is a time in seconds that we want the program to fetch feeds.\n\tWe first take the arguments provided and then parse it into a time.Duration type*/",
+      "line": 160,
+      "start": 4674,
+      "end": 4916
     },
     {
       "text": "/*this handler expects that a name and a url to the website we want a feed from is provided\n\twe take the Name the user wants to name the url 'feedURL', the actual url of the feed, the userID of\n\tthe logged in user 'loggedUser' and use them to create an entry in the feeds table.\n\tThe actual feed(the RSS content) is handled by the handlerAggregate() funciton\n\t*/",
-      "line": 167,
-      "start": 4980,
-      "end": 5342
+      "line": 183,
+      "start": 5340,
+      "end": 5702
     },
     {
       "text": "//get data from the database where name matches. error out if no user found",
-      "line": 178,
-      "start": 5452,
-      "end": 5527
+      "line": 194,
+      "start": 5812,
+      "end": 5887
     },
     {
       "text": "/*we also want an entry into the feedfollow table whenver a user creates adds a new feed\n\tin order to register that the current user follows the feed. we do this by using the\n\thandlerFollow funciton*/",
-      "line": 192,
-      "start": 5876,
-      "end": 6076
+      "line": 208,
+      "start": 6236,
+      "end": 6436
     },
     {
       "text": "/*this function takes a url as argument and creates an entry into feedFollow table using\n\tthe CreateFeedFollow funtion generated by sqlc. the feedFollow table is a table\n\tthat links the feeds and users table it creates this entry into the DB based off of\n\tthe currently logged in user*/",
-      "line": 224,
-      "start": 6860,
-      "end": 7146
+      "line": 240,
+      "start": 7220,
+      "end": 7506
     },
     {
       "text": "//get all entries of current logged in  user fron the users table",
-      "line": 232,
-      "start": 7226,
-      "end": 7291
+      "line": 248,
+      "start": 7586,
+      "end": 7651
     },
     {
       "text": "//get feed associated with the url passed",
-      "line": 233,
-      "start": 7293,
-      "end": 7334
+      "line": 249,
+      "start": 7653,
+      "end": 7694
     },
     {
       "text": "/*create entry into feed follow table. the query that makes the entry, also returns the\n\tName of the feed AND the Username of the user who made the field\n\t*/",
-      "line": 247,
-      "start": 7656,
-      "end": 7813
+      "line": 263,
+      "start": 8016,
+      "end": 8173
     },
     {
       "text": "//if entry created was successful, we need to print the name of the feed and name of the current user",
-      "line": 255,
-      "start": 7991,
-      "end": 8092
+      "line": 271,
+      "start": 8351,
+      "end": 8452
     },
     {
       "text": "/*prints all the feedNames that the currently logged in user follows\n\twe need to get the userID of the currently logged in user and then use that to\n\tquery the  feed follow table. The GetFeedFollowForUser function does that*/",
-      "line": 261,
-      "start": 8275,
-      "end": 8500
+      "line": 277,
+      "start": 8635,
+      "end": 8860
     },
     {
       "text": "//---------------------------Handlers End---------------------------------------------------//",
-      "line": 289,
-      "start": 9154,
-      "end": 9248
+      "line": 305,
+      "start": 9514,
+      "end": 9608
     }
   ],
   "filePath": "main.go"

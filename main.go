@@ -71,14 +71,15 @@ func handlerLogin(s *state, cmd command) error {
 
 	_, err := s.db.GetUser(context.Background(), cmd.Args[0])
 	if err != nil {
-		return fmt.Errorf("couldn't find user: %v", err)
+		fmt.Println("couldn't find user")
+		return err
 	}
 
 	if err := s.config.SetUser(cmd.Args[0]); err != nil {
 		fmt.Printf("unable to set user name, %v", err)
 		return err
 	}
-	fmt.Println("username has been set")
+	fmt.Printf("username: %v is logged in\n", cmd.Args[0])
 	return nil
 }
 
@@ -125,9 +126,13 @@ func handlerGetUsers(s *state, cmd command) error {
 	if err != nil {
 		return fmt.Errorf("unable to get users %v", err)
 	}
+	if len(users) == 0 {
+		fmt.Println("no user has been added")
+		return nil
+	}
 	for _, username := range users {
 		if s.config.CurrentUserName == username {
-			fmt.Printf("%v (current)", username)
+			fmt.Printf("%v (current)\n", username)
 		} else {
 			fmt.Println(username)
 		}
@@ -138,13 +143,23 @@ func handlerGetUsers(s *state, cmd command) error {
 
 func handlerAggregate(s *state, cmd command) error {
 
-	feedURL := "https://www.wagslane.dev/index.xml"
-	rssFeed, err := fetchFeed(context.Background(), feedURL)
-	if err != nil {
-		return fmt.Errorf("unable to run agg command %v", err)
+	if err := containArgs(cmd); err != nil {
+		return err
 	}
-	fmt.Printf("%+v\n", rssFeed)
-	return nil
+	timeBetweenRequests, err := time.ParseDuration(cmd.Args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Collecting feeds every %v", timeBetweenRequests)
+
+	ticker := time.NewTicker(timeBetweenRequests)
+	for ; ; <-ticker.C {
+		err := scrapeFeeds(s)
+		if err != nil {
+			return err
+		}
+	}
+
 }
 
 func handlerAddFeed(s *state, cmd command, user database.User) error {
