@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -52,6 +53,7 @@ func main() {
 	cmds.register("follow", middlewareLoggedIn(handlerFollow))
 	cmds.register("following", middlewareLoggedIn(handlerFollowing))
 	cmds.register("unfollow", middlewareLoggedIn(handlerUnfollowFeed))
+	cmds.register("browse", middlewareLoggedIn(handlerBrowse))
 
 	commandLineInput := os.Args
 	commandName := commandLineInput[1]
@@ -146,6 +148,7 @@ func handlerAggregate(s *state, cmd command) error {
 	if err := containArgs(cmd); err != nil {
 		return err
 	}
+
 	timeBetweenRequests, err := time.ParseDuration(cmd.Args[0])
 	if err != nil {
 		return err
@@ -267,6 +270,40 @@ func handlerUnfollowFeed(s *state, cmd command, user database.User) error {
 	if err := s.db.DeleteFeedFollow(context.Background(), deleteParams); err != nil {
 		fmt.Println("unfollow feed operation failed")
 		return err
+	}
+	return nil
+}
+
+func handlerBrowse(s *state, cmd command, user database.User) error {
+	var limit int
+	if err := containArgs(cmd); err != nil {
+		limit = 2
+	} else {
+		specifiedLimit, err := strconv.Atoi(cmd.Args[0])
+		if err != nil {
+			fmt.Println("unable to parse limit value")
+			return nil
+		}
+		limit = specifiedLimit
+	}
+	postParams := database.GetPostsForUserParams{
+		UserID: user.ID,
+		Limit:  int32(limit),
+	}
+
+	userPosts, err := s.db.GetPostsForUser(context.Background(), postParams)
+	if err != nil {
+		fmt.Printf("unable to fetch posts for users. err: %v\n", err)
+		return err
+	}
+
+	fmt.Printf("Found %d posts for user %s:\n", len(userPosts), user.Name)
+	for _, post := range userPosts {
+		fmt.Printf("%s from %s\n", post.PublishedAt.Format("Mon Jan 2"), post.FeedName)
+		fmt.Printf("--- %s ---\n", post.Title)
+		fmt.Printf("    %v\n", post.Description)
+		fmt.Printf("Link: %s\n", post.Url)
+		fmt.Println("=====================================")
 	}
 	return nil
 }

@@ -21,7 +21,7 @@ func (q *Queries) GetNextFeedToFetch(ctx context.Context) (Feed, error) {
 	err := row.Scan(
 		&i.ID,
 		&i.CreatedAt,
-		&i.UpdatedAt, 
+		&i.UpdatedAt,
 		&i.Name,
 		&i.Url,
 		&i.UserID,

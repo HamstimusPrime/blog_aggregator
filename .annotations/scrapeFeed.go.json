@@ -1,0 +1,30 @@
+{
+  "originalContent": "package main\n\nimport (\n\t\"context\"\n\t\"fmt\"\n\t\"log\"\n\t\"strings\"\n\t\"time\"\n\n\t\"github.com/google/uuid\"\n\t\"github.com/hamstimusprime/blog_aggregator/internal/database\"\n)\n\nfunc scrapeFeeds(s *state) error {\n\tnextFeed, err := s.db.GetNextFeedToFetch(context.Background())\n\tif err != nil {\n\t\tfmt.Println(\"unaple to fetch next feed\")\n\t\treturn err\n\t}\n\tnextFeedID := nextFeed.ID\n\tmarkedFeed, err := s.db.MarkFeedFetched(context.Background(), nextFeedID)\n\tif err != nil {\n\t\tfmt.Println(\"unable to mark fetched feed\")\n\t\treturn err\n\t}\n\turl := markedFeed.Url\n\t/*we fetch a list of feeds from the database that gets parsed into an RSSFeed pointer*/\n\tfetchedFeedRSS, err := fetchFeed(context.Background(), url)\n\tif err != nil {\n\t\tfmt.Println(\"unable to get feed by url\")\n\t\treturn err\n\t}\n\n\tfor _, item := range fetchedFeedRSS.Channel.Item {\n\t\tfmt.Printf(\"feed title: %v\\n\", item.Title)\n\t}\n\t/*we loop over the RSSfeed's items array  and use each RSSitem's data to make a new post using the db.CreatePost function*/\n\tfor _, itemRSS := range fetchedFeedRSS.Channel.Item {\n\t\t/* **NOTE** we need to parse the PubDate of each RSSitem's pubDate to a time.time type\n\t\tbefore we could use it to create a post. To do this, we create a\n\t\tfunction that does this parsing called parsePublishDate */\n\t\tpublishedAt, err := time.Parse(time.RFC1123Z, itemRSS.PubDate)\n\t\tif err != nil {\n\t\t\tpublishedAt = time.Time{}\n\t\t\tfmt.Printf(\"could not parse date: %v, error: %v\", itemRSS.PubDate, err)\n\t\t}\n\t\tcreatePostParams := database.CreatePostParams{\n\t\t\tID:          uuid.New(),\n\t\t\tCreatedAt:   time.Now(),\n\t\t\tUpdatedAt:   time.Now(),\n\t\t\tTitle:       itemRSS.Title,\n\t\t\tUrl:         itemRSS.Link,\n\t\t\tDescription: itemRSS.Description,\n\t\t\tPublishedAt: publishedAt,\n\t\t\tFeedID:      nextFeedID,\n\t\t}\n\t\t/*we want to check for an error occurs when creating a post where, and\n\t\tthe error is one where a post with the same url of the post we are\n\t\ttrying to add already exists in\n\t\tthe post table, we log it, but ignore it.*/\n\t\t_, err = s.db.CreatePost(context.Background(), createPostParams)\n\t\tif err != nil {\n\t\t\tif strings.Contains(err.Error(), \"duplicate key value violates unique constraint\") {\n\t\t\t\tcontinue\n\t\t\t}\n\t\t\tlog.Printf(\"Couldn't create post from feed %v with title %q: %v\", nextFeedID, itemRSS.Title, err)\n\t\t\tcontinue\n\t\t}\n\n\t}\n\treturn nil\n}\n",
+  "comments": [
+    {
+      "text": "/*we fetch a list of feeds from the database that gets parsed into an RSSFeed pointer*/",
+      "line": 26,
+      "start": 539,
+      "end": 626
+    },
+    {
+      "text": "/*we loop over the RSSfeed's items array  and use each RSSitem's data to make a new post using the db.CreatePost function*/",
+      "line": 36,
+      "start": 866,
+      "end": 989
+    },
+    {
+      "text": "/* **NOTE** we need to parse the PubDate of each RSSitem's pubDate to a time.time type\n\t\tbefore we could use it to create a post. To do this, we create a\n\t\tfunction that does this parsing called parsePublishDate */",
+      "line": 38,
+      "start": 1047,
+      "end": 1261
+    },
+    {
+      "text": "/*we want to check for an error occurs when creating a post where, and\n\t\tthe error is one where a post with the same url of the post we are\n\t\ttrying to add already exists in\n\t\tthe post table, we log it, but ignore it.*/",
+      "line": 56,
+      "start": 1747,
+      "end": 1966
+    }
+  ],
+  "filePath": "scrapeFeed.go"
+}
